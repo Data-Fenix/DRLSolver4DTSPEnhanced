@@ -154,30 +154,53 @@ Both `m1` and `m1_graph_dependent` share the same training interface (`train.py`
 ```
 DRLSolver4DTSPTimeSlicing/
 │
-├── m1/                          # Graph-independent model
-│   ├── train.py                 # Training entry point
-│   ├── test.py                  # Evaluation & model comparison
-│   ├── transformer.py           # Encoder + decoder (attention model)
-│   ├── options.py               # All hyperparameters and flags
-│   ├── baselines.py             # REINFORCE baselines (rollout, critic, exponential)
-│   ├── heuristics.py            # Nearest-neighbour, greedy-edge, two-opt, etc.
-│   ├── experiment_tracker.py    # CSV-based experiment logging
-│   ├── evaluate_step_mlp.py     # Step-MLP ablation evaluation
-│   ├── visualize_experiments.py # Plot experiment results
+├── m1/                              # Graph-independent model
+│   ├── train.py                     # Training entry point
+│   ├── test.py                      # Evaluation & model comparison
+│   ├── transformer.py               # Encoder + decoder (attention model)
+│   ├── options.py                   # All hyperparameters and flags
+│   ├── baselines.py                 # REINFORCE baselines (rollout, critic, exponential)
+│   ├── heuristics.py                # Nearest-neighbour, greedy-edge, two-opt, etc.
+│   ├── experiment_tracker.py        # CSV-based experiment logging
+│   ├── evaluate_step_mlp.py         # Step-MLP ablation evaluation
+│   ├── visualize_experiments.py     # Plot experiment results
 │   └── analyze_time_slicing_experiments.py
 │
-├── m1_graph_dependent/          # Graph-dependent model (same interface as m1)
-│   ├── ...                      # Same structure as m1
-│   ├── eval_heuristics.py       # CPU heuristic evaluation
-│   ├── eval_heuristics_GPU.py   # GPU heuristic evaluation
-│   └── time_inference.py        # Inference timing benchmarks
+├── m1_graph_dependent/              # Graph-dependent model (same interface as m1)
+│   ├── ...                          # Same structure as m1
+│   ├── eval_heuristics.py           # CPU heuristic evaluation
+│   ├── eval_heuristics_GPU.py       # GPU heuristic evaluation
+│   └── time_inference.py            # Inference timing benchmarks
 │
-├── m2/                          # Experimental model 2
+├── m2/                              # Experimental model 2
 │
-├── data_nodes/                  # Node coordinate datasets (19 & 49 cities)
-├── val_costs/                   # Validation cost CSVs and plots
-├── documentation/               # Auto-generated decoder documentation
-├── figures/                     # Architecture diagrams and result figures
+├── data/                            # All input data
+│   ├── node_19.txt                  # City coordinates (19-city benchmark)
+│   ├── node_49.txt                  # City coordinates (49-city benchmark)
+│   ├── valid_data_19.txt            # Validation instances (19 cities)
+│   ├── valid_data_49.txt            # Validation instances (49 cities)
+│   ├── valid_data_49_v2.txt         # Validation instances (49 cities, v2)
+│   └── generate_node_dataset.py     # Dataset generation script
+│
+├── results/                         # All experimental outputs
+│   ├── comparison/                  # Model comparison results (costs, routes, xlsx)
+│   ├── heuristics/                  # Heuristic baseline costs and summaries
+│   ├── validation/                  # Validation cost curves (CSV + plots)
+│   ├── timing/                      # Inference timing benchmarks (xlsx)
+│   └── logs/                        # Experiment tracking logs (CSV)
+│
+├── docs/                            # Papers and documentation
+│   ├── Thesis Report_Anuradha_Dissanayake.pdf
+│   ├── PPT.pdf
+│   ├── Anuradha_Dissanayake_Thesis_Proposal_V2.pdf
+│   └── DECODER_DOCUMENTATION.docx
+│
+├── figures/                         # Architecture diagrams and result figures
+│
+├── scripts/                         # Utility scripts
+│   ├── check_torch_env.py           # Verify PyTorch environment
+│   ├── plot_spline.py               # Plot distance spline curves
+│   └── test_direct_local.sh         # Local end-to-end test runner
 │
 ├── requirements.txt
 ├── .gitignore
