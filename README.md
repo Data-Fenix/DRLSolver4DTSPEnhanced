@@ -27,7 +27,7 @@ A Deep Reinforcement Learning framework for solving the **Dynamic Travelling Sal
 
 ## Overview
 
-Classical TSP solvers assume static edge costs. In real-world routing problems — urban logistics, ride-hailing, delivery fleets — travel times fluctuate throughout the day. This work addresses the **Dynamic TSP**, where edge costs (travel times) evolve as a function of time according to time-dependent distance matrices derived from real traffic data.
+Classical TSP solvers assume static edge costs. In real-world routing problems such as urban logistics, ride-hailing, and delivery fleets, travel times fluctuate throughout the day. This work addresses the **Dynamic TSP**, where edge costs (travel times) evolve as a function of time according to time-dependent distance matrices derived from real traffic data.
 
 The solver adapts the attention-based RL framework of Kool et al. (2019) with three novel modules:
 
