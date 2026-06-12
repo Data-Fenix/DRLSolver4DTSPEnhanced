@@ -1,7 +1,7 @@
 # DRL Solver for the Time-Dependent Travelling Salesman Problem
 
-> **Master's Thesis** — Anuradha Dissanayake  
-> University of Hildesheim, Germany · Supervisor: Tim Dernedde
+> **Master's Thesis** - Anuradha Dissanayake  
+> University of Hildesheim, Germany · Supervisor: Prof. Dr. Dr. Lars Schmidt-Thieme, Tim Dernedde
 
 A Deep Reinforcement Learning framework for solving the **deterministic Time-Dependent Travelling Salesman Problem (TDTSP)** with a fixed customer set. Built on top of the M1 attention-based encoder-decoder of Zhang et al. (2023), this work introduces three architectural extensions — **Step-Aware Decoder (Step-MLP / Temp-MLP)**, **Cost-Aware Gating**, and **Time-Sliced Traffic Encoding with Safe Refresh** — evaluated on real-world Beijing traffic data at customer set sizes C = 19 and C = 49.
 
@@ -67,7 +67,7 @@ The state is split into **static** attributes (known at episode start and unchan
 
 The M1 baseline (Zhang et al., 2023) has three architectural gaps that this thesis addresses:
 
-### Gap 1 — No Tour-Progress Awareness in the Decoder
+### Gap 1 - No Tour-Progress Awareness in the Decoder
 
 The M1 decoder receives the graph embedding, depot embedding, visited mask, last-visited node, and current traffic — but has no explicit signal for how far through the tour it has progressed. Early-tour decisions (anticipating afternoon congestion) and late-tour decisions (declining congestion) require fundamentally different reasoning.
 
@@ -84,7 +84,7 @@ Four decoder variants are evaluated:
 | **Option C** | Pre-attention | MLP applied to the full context vector before attention |
 | **Temp-MLP** | Post-attention | Learns a temperature scalar that scales the attention logits |
 
-### Gap 2 — No Classical Heuristic Knowledge in the Decoder
+### Gap 2 - No Classical Heuristic Knowledge in the Decoder
 
 Neural routing models learn purely from reward signal and ignore decades of knowledge encoded in classical heuristics (nearest-neighbour, greedy edge, etc.).
 
@@ -96,7 +96,7 @@ $$\ell_i^{\text{blended}} = \ell_i + \lambda_{\text{heur}} \cdot h_i(s_t)$$
 
 Unlike prior work (ReLD, Huang et al. 2025) that uses static Euclidean distances, this mechanism uses **time-dependent travel costs** as the heuristic signal. Linear (nearest-neighbour), two-step lookahead (NN+1), and randomised NN (NNR) heuristics are supported. Both fixed and learnable λ are explored.
 
-### Gap 3 — Encoder Consumes the Full 24-Hour Traffic Profile
+### Gap 3 - Encoder Consumes the Full 24-Hour Traffic Profile
 
 The M1 encoder encodes the entire day's traffic matrix, most of which is irrelevant once the tour is underway. This wastes computation and dilutes attention on relevant future traffic.
 
