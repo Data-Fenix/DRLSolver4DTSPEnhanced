@@ -1,0 +1,960 @@
+%!TEX root = ../Master_template.tex
+\chapter{Experiments}
+
+All experiments were executed on the university HPC cluster (STUD partition). Each experiment
+was allocated 4 CPU cores and a single NVIDIA GeForce RTX 2070 GPU with 8\,GB of memory.
+
+\section{Experimental Setup}
+\label{sec:exp_setup}
+
+\textbf{Problem and Dataset.} All methods are evaluated using a real-world dataset from Beijing, which was also used by the
+authors of the baseline paper \citep{zhang2023}. The dataset consists of 100 locations
+(including the depot), and travel times are recorded for every ordered pair $(i, j)$, yielding
+10{,}000 city pairs in total. The 24-hour day is divided into 2-hour intervals (giving 12 time
+bins per arc), with each interval storing a normalised travel time. Rather than using raw
+(actual) values, the travel times are preprocessed using cubic spline interpolation. Full
+details of this procedure are described in Section~\ref{subsec:data_gen}. Out of these 100
+locations, this study focuses on four customer sets ($C$):
+
+\begin{itemize}
+    \item $C = 19$: used for comparisons in the experiments.
+    \item $C = 20$: used for hyperparameter optimisation.
+    \item $C = 29$: intermediate scalability check and graph dependency experiments.
+    \item $C = 49$: used for larger-scale and scalability experiments.
+\end{itemize}
+
+Each training instance uses a random subset of the 100 cities of size graph\_size $+ 1$
+(including the depot), selected by random scoring and sorting as described in
+Section~\ref{subsec:data_gen}. Nodes are represented as one-hot encoded vectors of dimension
+100 rather than raw coordinates, since the model operates on time-dependent travel times
+rather than Euclidean distances.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{figs/location_map_of_benchmark_dataset.png}
+    \caption{Location map of the benchmark dataset (Beijing). The depot is located at the
+    bottom-right of the map. Reproduced from \citep{zhang2023}.}
+    \label{fig:beijing_map}
+\end{figure}
+
+\textbf{Models and variants.} As discussed in Section~\ref{sec:extensions}, this chapter evaluates:
+
+\begin{itemize}
+    \item Four different step-aware decoder configurations with different combinations of
+    features.
+    \item Three different heuristic model blending configurations using cost-aware gating.
+    \item Three different time-sliced window encoding and safe refreshing mechanism
+    configurations.
+\end{itemize}
+
+\textbf{Heuristic Baselines.} The proposed model's performance is compared with the following classical heuristics:
+Nearest Neighbour (NN), Greedy Edge, Randomised Nearest Neighbour (NNR),
+look-ahead-1 (NN+1), and 2-opt initialised with Nearest Neighbour.
+
+For a fair comparison, all heuristics are evaluated on the same problem instances and use the
+same cubic spline interpolation method.
+
+\textbf{Training.} All models are trained with policy gradient reinforcement learning with a rollout baseline
+using the following hyperparameters:
+
+\begin{table}[H]
+\centering
+\caption{Hyperparameters explored and selected values.}
+\label{tab:hyperparams_explored}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Values Explored} & \textbf{Selected Value} \\
+\midrule
+Batch size          & 32, 256, 512                       & 256 (see Section~\ref{sec:batch_size_stability}) \\
+Epochs              & 50, 100                            & 50 ($C = 19/20$), 100 ($C = 29/49$) \\
+Learning rate       & 0.00005, 0.0001, 0.00015, 0.0002  & 0.0001 (see Section~\ref{sec:hyperparam_opt}) \\
+LR decay            & 0.99, 0.995, 0.998                 & 0.995 (see Section~\ref{sec:hyperparam_opt}) \\
+Step-MLP hidden dim & 32, 64, 128                        & 64 (see Section~\ref{sec:hyperparam_opt}) \\
+Random seeds        & 1234, 5678, 9012                   & All three (averaged) \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+To ensure robust results, three predefined random seeds are used, and all reported numbers are
+averages of the three random seeds. Sampling is used for training, and greedy decoding is used
+for both the baseline model and evaluation, unless otherwise specified. The user may optionally
+select beam search for evaluation, and those results are reported separately in
+Section~\ref{sec:beam_search}.
+
+\section{Baseline Model (M1) Performance}
+\label{sec:baseline_performance}
+
+Before evaluating the proposed modifications, the performance of the M1 baseline is first
+established as an unmodified reference point. This baseline uses the full-day traffic profile,
+without decoder MLP variants or cost-aware gating. All results use greedy decoding and are
+reported as mean test cost in minutes.
+
+\textbf{Effect of Training Duration ($C = 19$).} Using the architecture described in Chapter~3, the baseline model (M1) is trained for
+$C = 19$ nodes with 50 and 100 epochs. Table~\ref{tab:baseline_combined} shows that training
+for 100 epochs improves performance by approximately 9.2 minutes (574.73 vs 565.50 min),
+with significantly reduced variance (10.78 vs 0.58). Based on this finding, all experiments
+on larger graph sizes ($C = 29$, $C = 49$) use 100 training epochs as the default, while
+experiments focused on feature selection and hyperparameter search at $C = 19$ and
+$C = 20$ use 50 epochs to reduce computational cost and obtain results more quickly.
+
+\begin{table}[H]
+\centering
+\caption{Baseline M1 performance across training epochs and graph sizes.}
+\label{tab:baseline_combined}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lll}
+\toprule
+\textbf{Graph Size} & \textbf{Epochs} & \textbf{Mean $\pm$ SD (min)} \\
+\midrule
+$C = 19$ & 50  & 574.73 $\pm$ 10.78 \\
+$C = 19$ & 100 & 565.50 $\pm$ 0.58 \\
+$C = 29$ & 100 & 766.79 $\pm$ 7.39 \\
+$C = 49$ & 100 & 1095.93 $\pm$ 73.34 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+These baseline results serve as the comparison target throughout subsequent sections.
+
+\section{Step-MLP Variants}
+\label{sec:step_mlp_variants}
+
+This section evaluates the proposed Step-MLP and related decoder enhancements. All
+experiments use $C = 19$ with 50 epochs unless otherwise stated, with the reference baseline
+of $574.73 \pm 10.78$ minutes (Table~\ref{tab:baseline_combined}). The Step-MLP adds a
+context nudge to the decoder using step-aware features passed through a three-layer MLP
+(Section~\ref{subsec:step_mlp}).
+
+\textbf{Feature Selection for Step-MLP.} Individual features (step ratio, linear time, depot distance, tour length, mean dist
+unvisited, last 3 visited nodes) were first evaluated independently. No single feature
+outperformed the baseline, ranging from 577.9 to 581.5 minutes, compared to 574.7 minutes
+for the baseline, though linear time and mean distance to unvisited nodes performed best
+among them.
+
+Several predefined feature combinations were then evaluated (Table~\ref{tab:feature_presets_exp}).
+The v2\_light preset with linear time encoding achieves the lowest mean cost (573.80 min).
+However, this difference of 0.93 minutes lies well within one standard deviation of the baseline
+(574.73 $\pm$ 10.78 min) and cannot be considered a statistically significant improvement at
+this scale. Notably, v2\_light exhibits substantially reduced variance ($\pm$7.22 vs.\ $\pm$10.78),
+indicating more stable training across seeds. Higher-dimensional feature
+sets (129 to 132 dimensions) do not offer consistent improvements, suggesting embedding-based
+features introduce noise at this problem size.
+
+\begin{table}[H]
+\centering
+\caption{Feature preset comparison ($C = 19$, 50 epochs).}
+\label{tab:feature_presets_exp}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{llllll}
+\toprule
+\textbf{Feature Set} & \textbf{Baseline} & \textbf{v1 light (4)}
+    & \textbf{minimal (129)} & \textbf{v1 (132)} & \textbf{v2 light (linear, 5)} \\
+\midrule
+Mean $\pm$ SD (min) & 574.73 $\pm$ 10.78 & 580.00 $\pm$ 3.42
+    & 575.60 $\pm$ 8.00 & 574.95 $\pm$ 7.36 & \textbf{573.80 $\pm$ 7.22} \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+A leave-one-out ablation on v2\_light, which has five features, (Table~\ref{tab:ablation_v2light})
+reveals that linear time is the most critical feature, as removing it increases cost by 7.5
+minutes. Replacing linear time with sinusoidal encoding also degrades performance (578.2 vs.\
+573.8 min), likely because travel time bins represent a single non-repeating operational day.
+Based on its stable training behaviour and lowest mean cost among all tested presets, v2\_light
+with linear time encoding is selected for all subsequent experiments.
+
+\begin{table}[H]
+\centering
+\caption{Leave-one-out ablation of v2\_light ($C = 19$, 50 epochs).}
+\label{tab:ablation_v2light}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lll}
+\toprule
+\textbf{Removed Feature} & \textbf{Mean Cost (min)} & \textbf{$\Delta$ vs.\ Full v2\_light} \\
+\midrule
+None (full v2\_light)  & 573.80 & - \\
+linear\_time           & 581.34 & $+7.49$ \\
+mean\_dist\_unvisited  & 578.80 & $+4.95$ \\
+step\_ratio            & 577.96 & $+4.11$ \\
+tour\_length           & 577.12 & $+3.27$ \\
+depot\_distance        & 574.55 & $+0.70$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+\textbf{Temperature MLP and Decoder MLP Variants.} Beyond the Step-MLP context nudge, three additional mechanisms were evaluated: Temperature
+MLP (scales attention logits), Option C (pre-attention MLP), and Option A (post-attention
+MLP). Table~\ref{tab:decoder_mlp_c19} summarises results at $C = 19$.
+
+\begin{table}[H]
+\centering
+\caption{Decoder MLP variant results ($C = 19$, 50 epochs).}
+\label{tab:decoder_mlp_c19}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{ll}
+\toprule
+\textbf{Configuration} & \textbf{Mean $\pm$ SD (min)} \\
+\midrule
+Baseline             & 574.73 $\pm$ 10.78 \\
+Temp-MLP standalone  & \textbf{568.68 $\pm$ 2.12} \\
+Option C only        & 570.39 $\pm$ 1.85 \\
+Option A only        & 570.32 $\pm$ 2.10 \\
+Step-MLP + Temp-MLP  & 576.00 $\pm$ 5.59 \\
+Option C + Temp-MLP  & 570.05 $\pm$ 0.98 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+At $C = 19$, Temp-MLP standalone achieves the best performance (568.68 min), improving by
+approximately 6 minutes with notably reduced variance. Option A and Option C individually
+outperform the baseline by almost 4 minutes. However, combining components generally does
+not yield additional gains.
+
+\textbf{Scaling to $C = 49$.} Table~\ref{tab:decoder_mlp_c49} presents results at the
+larger graph size with 100 epochs.
+
+\begin{table}[H]
+\centering
+\caption{Decoder MLP variant comparison ($C = 49$, 100 epochs, batch size = 256).}
+\label{tab:decoder_mlp_c49}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lll}
+\toprule
+\textbf{Configuration} & \textbf{Mean $\pm$ SD (min)} & \textbf{$\Delta$ vs.\ Baseline} \\
+\midrule
+Baseline                                 & 1095.93 $\pm$ 73.34 & -- \\
+Temp-MLP only                            & \textbf{1041.57 $\pm$ 19.61} & $-4.96\%$ \\
+Step-MLP + Temp-MLP                      & 1049.43 $\pm$ 22.91 & $-4.24\%$ \\
+Option C only                            & 1061.66 $\pm$ 37.07 & $-3.13\%$ \\
+Step-MLP + Option C + Temp-MLP$^\dagger$ & 1062.48 $\pm$ 25.23 & $-3.05\%$ \\
+Step-MLP (v2\_light)                     & 1068.77 $\pm$ 22.56 & $-2.48\%$ \\
+Option A only                            & 1158.85 $\pm$ 67.32 & $+5.74\%$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+\noindent{\footnotesize $^\dagger$Evaluation batch size reduced to 256 (default: 1024) due to
+CUDA memory constraints.}
+
+\medskip
+
+At $C = 49$, Temp-MLP alone yields the strongest performance (1041.57 min), delivering a
+54-minute (4.96\%) improvement over the baseline. Option A performs worse than the baseline,
+suggesting that post-attention glimpse refinement is not beneficial and that it is better to
+retain the linear transformation rather than a non-linear one. Combining components does not
+provide meaningful gains over the best standalone variant.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figs/val_cost_curves_temp_baseline.png}
+\caption{Mean validation cost $\pm$ standard deviation across three seeds (1234, 5678, 9012)
+over 300 epochs at $C = 49$ for Temp-MLP (solid blue) and Baseline (dashed orange). The
+shaded regions represent $\pm$ one standard deviation. The Temp-MLP mean remains consistently
+below the baseline throughout training, with a stable gap from approximately epoch 30 onwards.}
+\label{fig:val_cost_300ep}
+\end{figure}
+
+Due to computational and time limitations, the experiments in the main study were restricted
+to 100 epochs. However, it is still worth investigating the impact of longer training.
+Therefore, both the baseline and Temp-MLP were trained for 300 epochs across all three seeds,
+which corresponds to triple the default compute budget used in the main experiments.
+Figure~\ref{fig:val_cost_300ep} shows the mean validation cost across the three seeds over
+the full 300 epochs.
+
+The mean curve confirms that Temp-MLP maintains a consistent advantage over the baseline
+throughout the training process. Around epochs 20--30, the gap begins to open and remains
+almost stable for the rest of training. Importantly, Temp-MLP shows comparatively lower
+variance across seeds than the baseline, indicating more consistent training behaviour across
+different random initialisations.
+
+Neither model is fully converged at epoch 300, as both curves are still slowly declining.
+However, the rate of improvement clearly diminishes in the later epochs, suggesting that
+additional training would likely provide only marginal gains. The relative ordering between
+the two models is also unlikely to change.
+
+\textbf{Summary and Recommendation.}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figs/figure_4_5_decoder_mlp_final.png}
+\caption{Summary of decoder MLP variant performance at $C = 19$ and $C = 49$.}
+\label{fig:decoder_mlp_summary}
+\end{figure}
+
+The Temp-MLP produces the most significant and consistent improvement at both graph sizes,
+with notably low variance. At $C = 49$, it achieves a 4.96\% cost reduction. Option A
+(post-attention MLP) degrades performance at larger scales, suggesting that post-attention
+glimpse refinement is not beneficial and that it is better to retain the linear transformation
+rather than a non-linear one. Since the individual components outperform their combinations, Temp-MLP standalone is chosen
+as the best configuration for the final model comparison (Section~\ref{sec:heuristic_comparison}).
+As discussed earlier, due to computational and time limitations, the experiments in the main
+study were restricted to 100 epochs, where a single 100-epoch run at $C = 49$ takes
+approximately 360--650 minutes per seed. While 300-epoch runs confirmed that the Temp-MLP
+advantage is stable and persistent, running all configurations for 300 epochs was not feasible
+within the available compute budget. The 100-epoch results are therefore used consistently
+across all experiments to ensure fair and comparable evaluation. As shown in
+Figure~\ref{fig:val_cost_300ep}, the relative ordering between Temp-MLP and the baseline is
+stable from epoch 30 onwards, providing confidence that the conclusions drawn from 100-epoch
+experiments are reliable despite the limited training budget.
+
+\section{Batch Size and Training Stability}
+\label{sec:batch_size_stability}
+
+During initial experiments at $C = 49$, CUDA memory errors were encountered, and as a
+solution the batch size was reduced (original size was 512). This reduction introduced training instability, so
+batch sizes of 32 and 256 were compared (Table~\ref{tab:batch_size}).
+
+\begin{table}[H]
+\centering
+\caption{Batch size effect on test cost and training stability ($C = 49$, 100 epochs).}
+\label{tab:batch_size}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{llll}
+\toprule
+\textbf{Model} & \textbf{Batch} & \textbf{Mean $\pm$ SD (min)} & \textbf{Best Epoch} \\
+\midrule
+Baseline           & 32  & 1086.67 $\pm$ 13.84 & 9 \\
+Baseline           & 256 & 1095.93 $\pm$ 73.34 & 86 \\
+Step-MLP v2\_light & 32  & 1072.74 $\pm$ 43.31 & 35 \\
+Step-MLP v2\_light & 256 & 1068.77 $\pm$ 22.56 & 97 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Batch size 32 produces early best epochs (epochs 9 and 35), indicating training instability.
+In contrast, batch size 256 converges more stably, with the best epoch found at epochs 86
+to 97. Therefore, \textbf{batch size 256} is used for all remaining experiments.
+
+\section{Hyperparameter Optimisation}
+\label{sec:hyperparam_opt}
+
+After selecting the best-performing Step-MLP feature configuration (v2\_light with linear
+time, Section~\ref{sec:step_mlp_variants}), the next step is to identify the best
+hyperparameter combination for training. All experiments in this section use the Step-MLP
+v2\_light configuration, $C = 20$, batch size 256, and 50 epochs.
+
+Three hyperparameters are tuned sequentially instead of computationally expensive grid
+search: Step-MLP hidden dimension, learning rate, and learning rate decay.
+Figure~\ref{fig:hyperparams} shows the results of the hyperparameter sweep.
+
+For hidden dimension, 64 yields the best performance (591.99 minutes) compared to 32
+(600.49 minutes) and 128 (603.06 minutes).
+
+Using the selected hidden dimension of 64, learning rate 0.0001 achieves the best result
+(591.99 minutes), while other values result in performance degradation of 4 to 12 minutes.
+
+The learning rate decay is applied multiplicatively to the learning rate at the end of each
+epoch. A decay of 0.995 provides a slight (approximately one minute) advantage compared to
+the alternatives.
+
+The finalised hyperparameter combination is step\_mlp\_dim\,=\,64, learning\_rate\,=\,0.0001,
+and lr\_decay\,=\,0.995. Table~\ref{tab:hyperparam_results} summarises the selected values.
+
+\begin{table}[H]
+\centering
+\caption{Selected hyperparameters ($C = 20$, Step-MLP v2\_light, batch size 256).}
+\label{tab:hyperparam_results}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{llll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Values Tested} & \textbf{Selected}
+    & \textbf{Mean $\pm$ SD (min)} \\
+\midrule
+Step-MLP dim  & 32, 64, 128               & 64    & 591.99 $\pm$ 3.02 \\
+Learning rate & 5e-5, 1e-4, 1.5e-4, 2e-4 & 1e-4  & 591.99 $\pm$ 3.02 \\
+LR decay      & 0.99, 0.995, 0.998        & 0.995 & 591.99 $\pm$ 3.02 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figs/figure_4_6_hyperparams.png}
+\caption{Hyperparameter sweep results: Step-MLP hidden dimension (left), learning rate
+(centre), and learning rate decay (right). All experiments use $C = 20$, batch size 256,
+50 epochs.}
+\label{fig:hyperparams}
+\end{figure}
+
+\section{Cost-Aware Gating}
+\label{sec:cost_aware_exp}
+
+This section investigates the effect of incorporating cost-aware gating into the M1 model,
+which adds a heuristic bias to the decoder's logits (Section~\ref{subsec:cost_aware}). Three
+heuristic functions are evaluated: Nearest Neighbour (NN), Nearest Neighbour Random (NNR),
+and one-step lookahead (NN+1). The reference baseline for $C = 19$ is 565.50 minutes and
+for $C = 49$ is 1095.93 minutes (Table~\ref{tab:baseline_combined}).
+
+\textbf{Fixed Lambda ($C = 19$).} Figure~\ref{fig:lambda_sensitivity} shows the effect of various $\lambda$ values for the NN
+heuristic at $C = 19$. The optimal range is $\lambda \in [0.25, 0.75]$, and all values
+within this range outperform the baseline. When $\lambda$ exceeds 1.0, performance degrades
+substantially, indicating that over-weighting the heuristic suppresses the learned attention
+signal.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.80\textwidth]{figs/figure_4_7_lambda_sensitivity.png}
+\caption{Fixed lambda sensitivity with NN heuristic ($C = 19$, seed 1234).}
+\label{fig:lambda_sensitivity}
+\end{figure}
+
+Table~\ref{tab:fixed_lambda_c19} compares the three heuristic functions with the previously
+identified fixed $\lambda$ value. Ideally, the best fixed $\lambda$ value would be identified
+separately for each heuristic. However, due to computational limitations, the NN best fixed
+$\lambda$ value is applied to the other two methods as well. The NN heuristic achieves the
+best performance among the three, yet is unable to beat the baseline at this graph size.
+
+\begin{table}[H]
+\centering
+\caption{Fixed lambda results by heuristic ($C = 19$, 100 epochs).}
+\label{tab:fixed_lambda_c19}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lllll}
+\toprule
+\textbf{Metric} & \textbf{Baseline} & \textbf{NN} & \textbf{NNR} & \textbf{NN+1} \\
+\midrule
+Mean $\pm$ SD (min) & 565.50 $\pm$ 0.58 & 566.80 $\pm$ 0.58 & 572.90 $\pm$ 3.70 & 570.21 $\pm$ 3.24 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Learnable $\lambda$ was also tested using gradient descent but underperformed fixed $\lambda$
+across all heuristics (575.43 min for NN vs.\ 566.80 min with fixed $\lambda$). Nonlinear
+transformations (exponential and piecewise) were also tested but failed to outperform the
+linear approach (575.43 min and 567.83 min, respectively, vs.\ baseline 565.50 min).
+
+\textbf{Scaling to $C = 49$.} Since the cost-aware gating mechanism failed to beat the baseline at $C = 19$, it is worth
+investigating how it performs at $C = 49$. The best-performing configuration at $C = 19$
+(NN heuristic, fixed $\lambda = 0.25$) was used to evaluate $C = 49$ (Table~\ref{tab:cost_aware_c49}).
+
+\begin{table}[H]
+\centering
+\caption{Cost-aware gating results ($C = 49$, 100 epochs, batch size 256, fixed $\lambda =
+0.25$).}
+\label{tab:cost_aware_c49}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lll}
+\toprule
+\textbf{Configuration} & \textbf{Mean $\pm$ SD (min)} & \textbf{$\Delta$ vs.\ Baseline} \\
+\midrule
+Baseline                    & 1095.93 $\pm$ 73.34 & --- \\
+Cost-aware only (NN)        & \textbf{1055.75 $\pm$ 25.14} & $-3.67\%$ \\
+Option C + Cost-aware (NN)  & 1068.17 $\pm$ 26.05 & $-2.53\%$ \\
+Temp-MLP + Cost-aware (NN)  & 1062.78 $\pm$ 35.90 & $-3.02\%$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Unlike at $C = 19$, cost-aware gating leads to a significant improvement at $C = 49$.
+Cost-aware gating with the NN heuristic alone produces an improvement of approximately 40
+minutes (3.67\%) compared to the baseline. Combining with other decoder components does not
+provide additional gains, so standalone cost-aware gating yields the best performance. This
+suggests that cost-aware gating is particularly beneficial at larger problem sizes, as the
+model struggles with larger problems and cost-aware gating provides additional guidance
+through cost information to produce better results.
+
+\textbf{Summary and Recommendation.} At $C = 19$, cost-aware gating does not outperform the baseline. Learnable $\lambda$
+underperformed fixed $\lambda$, and nonlinear transformations failed to improve upon the
+linear approach.
+
+At $C = 49$, cost-aware gating produces a notable improvement (3.67\%) compared to the
+baseline. Combining with other decoder components does not provide additional gains.
+
+The best cost-aware configuration is: fixed $\lambda = 0.25$, NN heuristic, linear
+transformation.
+
+\section{Time Slicing with Safe Refresh}
+\label{sec:time_slicing_exp}
+
+The baseline M1 encoder feeds the full 24-hour traffic data. Time slicing replaces this with
+a forward window of $W$ time bins starting from a given start bin, thereby reducing the input
+dimensionality. When the decoder's current time approaches the end of the window, a safe
+refresh mechanism re-encodes (Section~\ref{subsec:time_slicing}).
+
+Before presenting the experimental results, the motivating hypotheses are introduced. These
+hypotheses were formulated based on the structure of the TDTSP and the architecture of the
+baseline model (Section~\ref{subsec:time_slicing}):
+
+\begin{itemize}
+    \item \textbf{H1:} Shorter time windows improve solution quality by reducing noise.
+    \item \textbf{H2:} More frequent encoder refresh improves performance.
+    \item \textbf{H3:} Optimal configurations depend on graph size.
+    \item \textbf{H4:} Start time has a meaningful impact on solution quality.
+    \item \textbf{H5:} Time slicing reduces computational cost with small accuracy loss.
+\end{itemize}
+
+These hypotheses are assessed in the summary and recommendations.
+
+The experiments evaluate three configuration choices: window size ($W$), refresh strategy,
+and start time. Results are presented across graph sizes $C = 19$, 20, 29, and 49. The
+baseline references are 574.73 minutes ($C = 19$, 50 epochs), 766.79 minutes ($C = 29$),
+and 1095.93 minutes ($C = 49$).
+
+\textbf{Window Size Comparison.} Four window sizes ($W = 3, 6, 9$, and forward window) were evaluated across three graph
+sizes with fixed start bin $= 3$ and one-time refresh. Figure~\ref{fig:window_size}
+summarises the results.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{figs/figure_4_9_window_size.png}
+\caption{Mean test cost vs.\ window size $W$ for $C = 19$, $C = 20$, and $C = 29$ (start
+bin = 3, one-time refresh, 50 epochs).}
+\label{fig:window_size}
+\end{figure}
+
+At $C = 19$, no window improves upon the baseline, though $W = 9$ performs best among the
+windows tested. At $C = 20$, almost all time slicing configurations achieve performance at or
+better than the baseline. Among them, $W = 3$ achieves the best mean cost (590.50 min) with
+the lowest variance. To continue investigating the effect of time windows at larger problem
+sizes, consider $C = 29$. At $C = 29$, $W = 9$ yields better performance than the baseline,
+as narrower windows (3 and 6) appear insufficient for larger tours. The optimal window size
+thus depends on graph size.
+
+\textbf{Refresh Strategy Comparison.} Four refresh strategies were evaluated: one-time, periodic (intervals 0.25 and 0.50),
+k-moves lookahead buffer, and combined. Table~\ref{tab:refresh_summary} summarises the
+best-performing strategy for each graph size.
+
+\begin{table}[H]
+\centering
+\caption{Best refresh strategy per graph size.}
+\label{tab:refresh_summary}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lllll}
+\toprule
+\textbf{Graph Size} & \textbf{Window} & \textbf{Best Strategy}
+    & \textbf{Mean $\pm$ SD (min)} & \textbf{$\Delta$ vs.\ Baseline} \\
+\midrule
+$C = 19$ & $W = 9$ & Periodic (0.25) & 572.55 $\pm$ 2.86 & $-0.38\%$ \\
+$C = 20$ & $W = 3$ & One-time        & 590.50 $\pm$ 3.08 & $-0.91\%$ \\
+$C = 29$ & $W = 9$ & One-time        & 763.48 $\pm$ 1.11 & $-0.43\%$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+All of the best refreshing strategies for graph sizes 19, 20, and 29 beat the baseline. At
+$C = 19$ and 20, periodic refresh (interval = 0.25) performs best. At $C = 29$, periodic
+refresh (0.50) just beats the baseline, but one-time performed best. One-time refresh is
+selected for future analysis due to its simplicity and competitive performance with low
+variance.
+
+\textbf{Start Time Sensitivity.} Start bins 0, 3, 6, and 9 were evaluated for each graph size. Start bin 3 consistently
+performs best across all graph sizes. Start bin 0 provides insufficient context, while bins
+6 and 9 may introduce irrelevant next-day data when combined with larger windows.
+
+\textbf{Validation at $C = 49$.} Using the best configuration ($W = 3$, start bin = 3), time slicing is validated at
+$C = 49$ with 100 epochs (Table~\ref{tab:time_slicing_c49}).
+
+\begin{table}[H]
+\centering
+\caption{Time slicing validation ($C = 49$, $W = 3$, start bin = 3, 100 epochs).}
+\label{tab:time_slicing_c49}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lll}
+\toprule
+\textbf{Strategy} & \textbf{Mean $\pm$ SD (min)} & \textbf{$\Delta$ vs.\ Baseline} \\
+\midrule
+Baseline        & 1095.93 $\pm$ 73.34 & -- \\
+One-time        & 1094.39 $\pm$ 43.17 & $-0.14\%$ \\
+Periodic (0.25) & \textbf{1082.81 $\pm$ 26.19} & $-1.20\%$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+At $C = 49$, periodic (0.25) achieves the best performance of 1082.81 minutes, an
+improvement of 13 minutes (1.20\%) over the baseline. More frequent encoder updates
+contribute to better solution quality at larger graph sizes.
+
+\textbf{Computational Efficiency.} Table~\ref{tab:efficiency} compares training time and solution quality.
+
+\begin{table}[H]
+\centering
+\caption{Computational efficiency: time slicing vs.\ baseline.}
+\label{tab:efficiency}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{llll}
+\toprule
+\textbf{Graph Size} & \textbf{Best Config} & \textbf{$\Delta$ Cost}
+    & \textbf{Time Overhead} \\
+\midrule
+$C = 19$ & $W=9$, Periodic (0.25) & $-0.38\%$ & $+2.49\%$ \\
+$C = 20$ & $W=3$, one-time        & $-0.91\%$ & $+1.70\%$ \\
+$C = 29$ & $W=9$, one-time        & $-0.43\%$ & $+8.33\%$ \\
+$C = 49$ & $W=3$, Periodic (0.25) & $-1.19\%$ & $+10.72\%$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+Time slicing improves solution quality through regular encoder refreshing and the exclusion
+of noisy, irrelevant data. However, it adds training overhead due to the refresh mechanism
+checking window boundaries and re-running the encoder. Rather than saving computation, time
+slicing trades additional training time for better solutions.
+
+\textbf{Summary and Recommendation.} Table~\ref{tab:time_slicing_summary} consolidates the best time-slicing configuration and
+its outcome at each graph size. The five hypotheses defined at the outset are assessed below.
+
+\begin{table}[H]
+\centering
+\caption{Time slicing summary - best configuration per graph size.}
+\label{tab:time_slicing_summary}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lllll}
+\toprule
+\textbf{Graph Size} & \textbf{Best Config} & \textbf{Mean Cost (min)}
+    & \textbf{$\Delta$ vs.\ Baseline} & \textbf{Time Overhead} \\
+\midrule
+$C = 19$ & $W=9$, start=3, Periodic (0.25) & 572.55  & $-0.38\%$ & $+2.49\%$ \\
+$C = 20$ & $W=3$, start=3, one-time        & 590.50  & $-0.91\%$ & $+1.70\%$ \\
+$C = 29$ & $W=9$, start=3, one-time        & 763.48  & $-0.43\%$ & $+3.8\%$ \\
+$C = 49$ & $W=3$, start=3, Periodic (0.25) & 1082.81 & $-1.19\%$ & $+10.72\%$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+The five hypotheses defined at the outset of this section are now assessed in light of the
+experimental findings.
+
+\textbf{H1 (Shorter windows improve quality) - Mostly rejected.} The forward window
+($W = 9$) outperforms narrow windows in 2/3 graph sizes ($C = 19$ and $C = 29$). This
+suggests that feeding the encoder with current and all remaining future data is more
+beneficial.
+
+\textbf{H2 (Frequent refresh improves performance) - Mostly confirmed.} One-time refresh
+was selected as the practical choice because of its simplicity, but periodic refresh wins
+in 3/4 cases (except $C = 29$).
+
+\textbf{H3 (Optimal config depends on graph size) - Confirmed.} Window sizes, refresh
+strategies, and start bins vary with graph size, confirming that time slicing must be tuned
+per problem scale.
+
+\textbf{H4 (Start time impacts quality) - Confirmed with caution.} Start bin 3 performs
+best, though this may be influenced by experimental setup. To confirm the truly optimal
+configuration, a full grid search over all parameters would be required. Nevertheless, the
+results clearly indicate that the start time bin has a noticeable impact on performance.
+
+\textbf{H5 (Time slicing reduces cost) - Rejected.} Time slicing adds overhead but
+improves solution quality.
+
+As part of the experimentation process, the current best decoder enhancement (Temp-MLP) was
+combined with the best-performing time slicing configuration to investigate whether the
+combination leads to further improvements. The best time slicing configuration at $C = 49$
+($W = 3$, start bin $= 3$, periodic refresh interval $= 0.25$) was combined with Temp-MLP
+and trained for 100 epochs across three seeds. Table~\ref{tab:temp_mlp_combo} presents the
+results.
+
+\begin{table}[H]
+\centering
+\caption{Temp-MLP and Time Slicing combination results ($C = 49$, 100 epochs, batch size 256).}
+\label{tab:temp_mlp_combo}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lll}
+\toprule
+\textbf{Configuration} & \textbf{Mean $\pm$ SD (min)} & \textbf{$\Delta$ vs Baseline} \\
+\midrule
+Baseline                                    & 1095.93 $\pm$ 73.34 & -- \\
+Temp-MLP standalone                         & 1041.57 $\pm$ 19.61 & $-4.96\%$ \\
+Time Slicing only ($W=3$, start=3, Periodic 0.25) & 1082.81 $\pm$ 26.19 & $-1.19\%$ \\
+Temp-MLP + Time Slicing                     & 1063.75 $\pm$ 6.47  & $-2.94\%$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+The combination achieves a 2.94\% improvement over the baseline, confirming that both
+extensions individually contribute meaningful gains. However, the combined configuration does
+not outperform Temp-MLP standalone (1063.75 min vs 1041.57 min). This is consistent with the
+pattern observed across other combinations throughout this chapter, where individual components
+consistently outperform their combinations. Notably, the combination exhibits the lowest
+variance of any configuration tested ($\pm$6.47 min). This suggests that combining the
+encoder-level time slicing modification with the decoder-level Temp-MLP produces more stable,
+but not necessarily better, solutions. The increased stability may be attributed to the
+complementary nature of the two modifications. Time slicing reduces encoder noise, while
+Temp-MLP regularises the decoder's exploration. Together, they constrain the solution space
+more tightly across different random initialisations.
+
+In summary, time slicing is most valuable as a solution quality enhancer at larger problem
+sizes, with gains of up to 1.19\% at $C = 49$. The forward window ($W = 9$ from start
+bin 3) is the most broadly effective configuration. Periodic refresh is generally preferable,
+though one-time refresh remains a competitive and practical alternative.
+
+
+\section{Graph-Size-Independent Architecture}
+\label{sec:graph_size_indep}
+
+The baseline M1 model has a significant practical limitation in that it was originally
+designed for fixed customer set sizes. To address this, an adaptive average pooling layer is
+introduced before each projection, mapping any input of arbitrary length to a fixed
+128-dimensional representation (Section~\ref{sec:graph_size_independent}).
+
+This section evaluates the pooling fix across two dimensions: (1) within-size performance,
+and (2) cross-size generalisation.
+
+\textbf{Within-Size Performance.} Table~\ref{tab:pooling_combined} compares the baseline and pooling models at $C = 19$ and
+$C = 29$.
+
+\begin{table}[H]
+\centering
+\caption{Within-size and cross-size performance (100 epochs, batch size 256).}
+\label{tab:pooling_combined}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{llllll}
+\toprule
+\textbf{Model} & \textbf{Train} & \textbf{Test}
+    & \textbf{Mean $\pm$ SD (min)} & \textbf{$\Delta$ vs.\ Baseline} \\
+\midrule
+\multicolumn{4}{l}{\textit{Within-size}} & \\
+Baseline & 19 & 19 & 565.50 $\pm$ 0.58 & -- \\
+Pooling  & 19 & 19 & 570.51 $\pm$ 2.99 & $+0.89\%$ \\
+Baseline & 29 & 29 & 766.79 $\pm$ 7.39 & -- \\
+Pooling  & 29 & 29 & 768.12 $\pm$ 7.87 & $+0.17\%$ \\
+\multicolumn{4}{l}{\textit{Cross-size}} & \\
+Pooling  & 19 & 29 & 770.15 $\pm$ 10.54 & $+0.44\%$ \\
+Pooling  & 29 & 19 & 572.52 $\pm$ 1.57  & $+1.24\%$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+At $C = 19$, the pooling model underperforms by 5.01 minutes (0.89\%). At $C = 29$, the
+difference is only 1.33 minutes (0.17\%). Overall, the adaptive pooling modification
+introduces only a minimal performance degradation of less than 0.89\%.
+
+\textbf{Cross-Size Generalisation.} The key innovation of the pooling is that the model can be trained on one graph size and
+evaluated directly on a different graph size without retraining. Results are included in
+Table~\ref{tab:pooling_combined} above.
+
+Training on $C = 19$ and evaluating on $C = 29$ yields 770.15 minutes (0.44\% degradation
+vs.\ baseline). Training on $C = 29$ and evaluating on $C = 19$ yields 572.52 minutes
+(1.24\% degradation).
+
+\textbf{Summary.} The adaptive pooling modification enables graph-size independence. A single trained instance
+of the modified M1 model can be applied to any graph size without retraining, with a
+solution quality degradation of less than 1\%.
+
+\section{Beam Search}
+\label{sec:beam_search}
+
+All experiments in previous sections use greedy decoding, in which the decoder selects the
+highest-probability node at each step. Beam search addresses this limitation by maintaining
+$B$ candidate partial tours at each step, retaining only the $B$ most promising sequences.
+At the end of decoding, the best complete tour among the $B$ candidates is returned.
+
+Beam width $B = 3$ is evaluated (Table~\ref{tab:beam_search}).
+
+\begin{table}[H]
+\centering
+\caption{Beam search results -- solution quality ($B = 3$).}
+\label{tab:beam_search}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{llll}
+\toprule
+\textbf{Decoding} & \textbf{Graph Size} & \textbf{Mean $\pm$ SD (min)}
+    & \textbf{$\Delta$ vs.\ Greedy} \\
+\midrule
+Greedy     & $C = 19$ & 574.73 $\pm$ 10.78  & --- \\
+Beam $B=3$ & $C = 19$ & 569.59 $\pm$ 1.03   & $-0.89\%$ \\
+Greedy     & $C = 49$ & 1095.93 $\pm$ 73.34 & --- \\
+Beam $B=3$ & $C = 49$ & 1095.49 $\pm$ 73.11 & $-0.04\%$ \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+At $C = 19$, beam search improves performance by 5.14 minutes (0.89\%) over greedy decoding.
+The cross-seed variance also drops sharply (SD = 1.03 vs.\ 10.78). This suggests that, at
+this scale, beam search (with width $B = 3$) yields a meaningful improvement in solution
+quality.
+
+At $C = 49$, the improvement is negligible, at only 0.44 minutes (0.04\%). This suggests
+that the search space at this scale is too large for a narrow beam to explore meaningfully.
+A computational efficiency comparison between greedy and beam search decoding is left for
+future work due to instrumentation constraints.
+
+\section{Comparison with Heuristic Baselines}
+\label{sec:heuristic_comparison}
+
+This section compares the best-performing models from each above section with five
+heuristics: Nearest Neighbour (NN), Greedy Edge (GE), Nearest Neighbour Random (NNR),
+NN+1 lookahead, and 2-opt local search. All heuristic models are evaluated on the same
+1,000 test instances used in the training process (each epoch's validation process at the
+end). The same traffic data with the same cubic spline interpolation method is also used.
+All results are reported as mean $\pm$ standard deviation across three random seeds (1234, 5678, 9012) for neural models, ensuring robust and reliable comparisons.
+
+\textbf{$C = 19$.} Table~\ref{tab:heuristic_c19} presents the results at $C = 19$.
+
+\begin{table}[H]
+\centering
+\caption{Solution quality and inference time comparison at $C = 19$ (mean $\pm$ SD across three seeds).}
+\label{tab:heuristic_c19}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lll}
+\toprule
+\textbf{Model / Heuristic} & \textbf{Mean $\pm$ SD (min)} & \textbf{Time per Instance} \\
+\midrule
+\multicolumn{3}{l}{\textit{Neural Models}} \\
+Baseline (M1)                 & 574.73 $\pm$ 10.78 & 0.24\,ms \\
+Temp-MLP                      & 568.68 $\pm$ 2.12  & 0.36\,ms \\
+Time Slicing ($W=9$, start=3) & 572.55 $\pm$ 2.86  & 0.25\,ms \\
+\midrule
+\multicolumn{3}{l}{\textit{Classical Heuristics}} \\
+2-opt                  & 575.65 $\pm$ 89.46  & 7{,}351.47\,ms \\
+Nearest Neighbour (NN) & 630.54 $\pm$ 105.49 & 9.80\,ms \\
+Greedy Edge            & 633.71 $\pm$ 105.58 & 10.58\,ms \\
+NNR                    & 636.38 $\pm$ 101.28 & 94.58\,ms \\
+NN+1                   & 648.86 $\pm$ 104.86 & 110.21\,ms \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\smallskip
+\begin{minipage}{\linewidth}
+\small Neural model results are averaged across three random seeds (1234, 5678, 9012). Heuristic baselines are deterministic and evaluated once on the same fixed test set. Cost-Aware Gating is excluded from this table as it did not outperform the baseline at $C = 19$ (see Section~\ref{sec:cost_aware_exp} for full results).
+\end{minipage}
+\end{table}
+
+
+\medskip
+
+All neural models surpass the classical heuristics at $C = 19$. The baseline M1 outperforms
+2-opt by 1 minute while running approximately 30,000 times faster (0.24\,ms vs 7,351.47\,ms).
+Temp-MLP achieves the best neural performance (568.68 $\pm$ 2.12 min), outperforming 2-opt by
+approximately 7 minutes with similarly fast inference. The remaining heuristics (NN, GE, NNR,
+NN+1) all produce performance more than 55 minutes worse compared to the neural models.
+Cost-Aware Gating is excluded from this table as it did not outperform the baseline at $C = 19$
+(see Section~\ref{sec:cost_aware_exp} for full results).
+
+\textbf{$C = 49$.} Table~\ref{tab:heuristic_c49} presents the results at $C = 49$.
+
+\begin{table}[H]
+\centering
+\caption{Solution quality and inference time comparison at $C = 49$ (mean $\pm$ SD across three seeds).}
+\label{tab:heuristic_c49}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lll}
+\toprule
+\textbf{Model / Heuristic} & \textbf{Mean $\pm$ SD (min)} & \textbf{Time per Instance} \\
+\midrule
+\multicolumn{3}{l}{\textit{Neural Models}} \\
+Baseline (M1)                 & 1095.93 $\pm$ 73.34 & 0.64\,ms \\
+Temp-MLP                      & 1041.57 $\pm$ 19.61 & 0.94\,ms \\
+Cost-Aware (NN, $\lambda=0.25$) & 1055.75 $\pm$ 25.14 & 6.05\,ms \\
+Time Slicing ($W=3$, start=3) & 1082.81 $\pm$ 26.19 & 0.65\,ms \\
+\midrule
+\multicolumn{3}{l}{\textit{Classical Heuristics}} \\
+2-opt                  & 1117.61 $\pm$ 91.79  & 91{,}349.73\,ms \\
+Greedy Edge            & 1154.21 $\pm$ 86.93  & 27.59\,ms \\
+Nearest Neighbour (NN) & 1168.03 $\pm$ 100.46 & 23.83\,ms \\
+NN+1                   & 1201.84 $\pm$ 96.65  & 630.93\,ms \\
+NNR                    & 1211.52 $\pm$ 93.24  & 250.65\,ms \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\smallskip
+\begin{minipage}{\linewidth}
+\small Neural model results are averaged across three random seeds (1234, 5678, 9012). Heuristic baselines are deterministic and evaluated once on the same fixed test set.
+\end{minipage}
+\end{table}
+
+
+\medskip
+
+At $C = 49$, the neural models show a clear advantage over all heuristic models. Temp-MLP
+achieves the best performance (1041.57 $\pm$ 19.61 min), outperforming 2-opt by approximately
+76 minutes (6.8\%) while running around 97,000 times faster (0.94\,ms vs 91,349\,ms). The
+baseline M1 (1095.93 $\pm$ 73.34 min) also outperforms all heuristics, beating 2-opt by
+approximately 22 minutes. All proposed extensions outperform every classical heuristic at
+this graph size.
+
+\textbf{Summary.} For both graph sizes ($C = 19$ and $C = 49$), the neural models consistently outperform
+classical heuristics in solution quality while offering significantly faster inference. The
+advantage grows with problem size, with neural models outperforming 2-opt by 1.21\% at
+$C = 19$ and up to 6.8\% at $C = 49$. These results confirm that the proposed deep
+reinforcement learning approach achieves both accuracy and scalability advantages over
+classical methods.
+
+\section{Summary, Discussion, and Recommendation}
+\label{sec:exp_summary_final}
+
+This chapter evaluated four different architectural modifications to the M1 baseline on the
+deterministic TDTSP with a fixed customer set. The chapter includes the key findings,
+discussion points, and practical recommendations for deployment.
+
+\subsection{Summary of Results}
+\label{subsec:summary_of_results}
+
+\textbf{Step-MLP and Decoder Variants.}
+Among all decoder modifications, the Temperature MLP (Temp-MLP) is the standout performer
+for both graph sizes. At $C = 19$, it reduces the mean cost by 6 minutes, and at $C = 49$,
+it achieves a 4.96\% improvement. In contrast, the post-attention glimpse refinement (Option
+A) degrades performance at $C = 49$, suggesting that it is better to retain the original
+linear projection rather than applying a nonlinear transformation to the glimpse vector. The
+Step-MLP and Option C produce better results at $C = 49$, but combining them with the
+Temp-MLP reduces performance. This implies that individual components show better performance
+compared to combinations.
+
+\textbf{Cost-Aware Gating.}
+This modification is clearly dependent on the graph size. At $C = 19$, the cost-aware gating
+mechanism did not outperform the baseline, as none of the configurations tested were able to
+beat it. However, at $C = 49$, standalone cost-aware gating with fixed $\lambda = 0.25$ and
+the linear NN heuristic produced a meaningful 3.67\% improvement. An additional key finding
+at $C = 19$ was that fixed lambda outperforms learnable lambda. Combining cost-aware gating
+with other components degraded performance in all tested combinations.
+
+\textbf{Time Slicing with Safe Refresh.}
+Time slicing consistently adds training overhead (approximately 2.5\% at $C = 19$ and 10.7\%
+at $C = 49$), but improves solution quality at both graph sizes (0.38\% and 1.19\%,
+respectively). The optimal time-slicing configurations depend on the graph size. The best
+configuration is $W = 3$ with one-time refresh at $C = 20$, and $W = 9$ with periodic
+refresh (interval = 0.25) at $C = 19$ and $C = 49$. In most cases, periodic refresh of
+the encoder improves results.
+
+\textbf{Graph-Size-Independent Architecture.}
+Introducing the adaptive pooling modification successfully mitigates the cross-size
+generalisation limitation with minimal quality degradation (at most 1.24\% relative to
+size-specific baselines).
+
+\textbf{Comparison with Heuristics.}
+All best-performing neural configurations outperform all classical heuristics in mean solution
+quality at both $C = 19$ and $C = 49$. The 2-opt model is the most competitive among the
+heuristic models, but requires a substantially longer inference time compared to the neural
+models.
+
+\subsection{Overall Recommendation}
+\label{subsec:overall_recommendation}
+
+Based on the experimental findings, the following practical recommendations are made:
+
+\begin{itemize}
+    \item \textbf{For small problem sizes ($C = 19/20$):} The Temp-MLP standalone is the
+    recommended extension. Time slicing with $W = 9$, start = 3, and periodic refresh
+    (interval = 0.25) also shows better performance, but the Temp-MLP standalone is highly
+    recommended at this scale. Cost-aware gating should be avoided at this scale.
+
+    \item \textbf{For larger problem sizes ($C = 49$):} The Temp-MLP remains the best
+    single-component choice. However, standalone cost-aware gating (NN, fixed $\lambda =
+    0.25$) and time slicing with periodic refresh ($W = 3$, interval = 0.25) also show
+    better performance compared to the baseline and are worth considering.
+
+    \item \textbf{Adaptive pooling} mitigates the graph-size dependency with a quality
+    trade-off of at most 1.24\% compared to the size-specific baseline, and is worth
+    considering in future developments.
+
+    \item \textbf{Individual components} may show better performance, but combining them
+    does not guarantee further gains. Therefore, it is advisable to evaluate components
+    individually before finalising a configuration.
+\end{itemize}
+
+

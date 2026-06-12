@@ -1,0 +1,192 @@
+%!TEX root = ../Master_template.tex
+\chapter{Introduction}
+
+\section{Background and Motivation}
+
+The classical Traveling Salesman Problem (TSP) is a well-known problem in many fields,
+including computer science, operations research, and applied mathematics. The main goal
+is to find the shortest path along which a salesman must visit each city once and return
+to the depot. TSP belongs to the class of NP-hard problems. In the real world, most
+domains that use TSP include logistics, supply chain management, manufacturing,
+telecommunications, and many more industries.
+
+The classical TSP assumes that travel costs are static and symmetric. In reality, travel
+times between two locations can vary depending on the departure time due to factors such
+as traffic congestion, rush hours, weather conditions, maintenance, and others. This
+motivates the study of the Time-Dependent Traveling Salesman Problem (TDTSP), where the
+travel time for each edge depends on the departure time from its origin node.
+
+Figure~\ref{fig:tdtsp_example} illustrates this concept with a simple example. A
+salesman at the depot must visit two customers, A and B, and return to the depot. The
+three panels show how travel times between the same locations change throughout the
+morning. At 08:00 during rush hour, the travel time from the depot to customer A is 60
+minutes (red arrow) while the route to B takes 65 minutes (black arrow). By 09:00, the
+travel time from A to B increases to 75 minutes due to shifting congestion patterns. At
+10:00, as rush hour subsides, most travel times vary further. This temporal variation
+has important implications for route planning. A visiting sequence that is optimal when
+departing at 08:00 may be suboptimal when departing at 09:00 or 10:00. An effective
+routing strategy must therefore anticipate how traffic conditions will evolve during the
+tour, not merely react to current conditions.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figs/TDTSP_Example}
+    \caption{Illustration of time-dependent travel times in TDTSP. The salesman at the
+    depot (van) must visit customers A and B. Travel times (in minutes) vary based on
+    departure time: 08:00 (rush hour), 09:00 (mid-morning), and 10:00 (off-peak). Red
+    arrows indicate one direction of travel; black arrows indicate the reverse direction.}
+    \label{fig:tdtsp_example}
+\end{figure}
+
+One of the earliest studies on the TDTSP used integer programming to solve it~\citep{picard1978}.
+This foundational work inspired subsequent research in this area. Later, \citet{malandraki1992} established a foundation for this problem class
+by proposing formulations for time-dependent vehicle routing problems (TDVRP) with
+step-function travel times. Most studies on the TDTSP assume the First-In-First-Out
+(FIFO) property. This property ensures that leaving later from a node cannot result in
+arriving earlier at the destination (no overtaking).
+
+Heuristic methods such as time-expanded formulations, simulated annealing, ant colony
+optimization, and genetic algorithms can produce high-quality results, but solving the
+TDTSP is a computationally expensive task. This was demonstrated by \citet{cordeau2014},
+who showed that even sophisticated branch-and-cut and branch-cut-and-price algorithms
+can only solve moderate-size instances to optimality.
+
+\section{Deep Reinforcement Learning for Combinatorial Optimization}
+
+In the past decade, deep reinforcement learning (DRL) and attention-based neural
+architectures have been used to solve routing problems. The Pointer Network is an
+encoder-decoder model that uses Sequence-to-Sequence (Seq2Seq) models to solve
+routing problems~\citep{vinyals2015pointer}. \citet{bello2017}
+replaced the Pointer Network's supervised learning (which relies on labelled training
+data) with the REINFORCE algorithm using a simple exponential moving average baseline.
+
+The introduction of the Transformer architecture by \citet{vaswani2017} significantly
+revolutionized the field, as it replaced recurrent neural networks (RNNs) entirely with
+self-attention mechanisms. \citet{kool2019} combined all of these innovations and
+produced the Attention Model (AM), which has become the standard baseline for solving
+routing problems. By following the footsteps of the Attention Model, \citet{zhang2023}
+proposed a deep reinforcement learning (DRL) framework for variants of the
+time-dependent TSP. They proposed two model variants called M1 and M2 to handle the
+time dependent dynamic TSP. In a fixed customer base problem, all customers are known
+at the start of the tour and remain unchanged throughout the whole tour. In contrast, a
+dynamic customer base allows new customers to appear or existing customers to be removed
+during the tour. M1 is more suitable for a fixed customer base, while M2 is better
+suited for a dynamic customer pool. In this thesis, we use the M1 model as the
+baseline, as we solve the deterministic TDTSP with a fixed customer set~\citep{zhang2023}.
+Furthermore, the paper reports that M1 achieves more than 5\% improvement over the M2
+model for a fixed customer set. However, we identified several gaps in the M1 model
+that leave room for potential improvements.
+
+\section{Research Gaps and Contributions}
+
+This section identifies three significant gaps in the current state-of-the-art model
+M1, and for each gap, we describe the limitation, the importance of filling the gap,
+and our proposed solution.
+
+\subsection{Gap 1: Lack of Awareness of the Tour Progress in the Decoder}
+
+At each decoding step, the standard M1 decoder receives only the following information:
+(1) graph embedding, (2) depot embedding, (3) a binary visited mask indicating which
+nodes have been visited, (4) the embedding of the last-visited node, and (5) the
+current traffic conditions. Crucially, the decoder has no explicit signal indicating
+how far through the tour it has progressed. This lack of progress awareness may be
+problematic for the TDTSP. In TDTSP, decisions made at different stages of the route
+have fundamentally different characteristics and should therefore be treated differently.
+For example, a tour beginning in the morning must anticipate afternoon traffic patterns,
+while an evening tour may benefit from declining congestion as it progresses. Without an
+explicit step ratio or temporal progress signal, the decoder cannot differentiate early
+from late tour decisions.
+
+Previous work by \citet{wu2021} recognized this limitation and proposed augmenting the
+decoder with a Gated Recurrent Unit (GRU). At each decoding step $t$, the GRU takes
+the current context vector as input and combines it with its hidden state from the
+previous step ($H_{t-1}$), producing an enhanced context vector $H_t$ that implicitly
+encodes the history of visited nodes and decisions made so far. While the GRU is
+effective, it can be computationally expensive, and it is therefore worthwhile to
+replace it with a lightweight MLP (Step-MLP) with tour-aware features (step ratio, last
+3 visited nodes, visited node embeddings, etc.). We also conduct experiments by varying
+the position of the MLP layer:
+
+\begin{itemize}
+    \item \textbf{Pre-attention MLP:} Nonlinear refinement of the query before
+    attention computation.
+    \item \textbf{Post-attention MLP:} Refinement of the glimpse vector after attention
+    but before final logit computation.
+\end{itemize}
+
+Additionally, we improve accuracy by scaling the attention logits with a
+scaling factor (temperature scaling factor) learned by a lightweight MLP layer
+(temp-MLP).
+
+\subsection{Gap 2: Absence of Classical Heuristic Knowledge in Neural Routing}
+
+Classical routing heuristics (nearest neighbor, greedy cost minimization) often provide
+reasonable, interpretable, and computationally inexpensive solutions. Therefore, we
+incorporate this knowledge into the decoder and produce a hybrid approach.
+
+Recently, researchers have begun exploring this direction. As a result, \citet{ye2023}
+proposed DeepACO, where neural networks generate heuristic measures to guide Ant Colony
+Optimisation search. More recently, Huang et al.\ (2025) presented ReLD, which adds a
+logarithmic distance term to the attention logits:
+
+\begin{equation}
+    p_i = \operatorname{Softmax}\!\left(C \cdot \tanh\!\left(
+        \frac{q_c^\top H_t}{\sqrt{d_h}} - \log(\mathrm{dist}_i)
+    \right)\right)_{\!i}
+    \label{eq:reld}
+\end{equation}
+
+However, this approach has two main limitations for time-dependent routing problems.
+First, it uses static distance metrics (Euclidean distance) that are not suitable for
+TDTSP. Second, the heuristic integration is fixed (simple logarithmic transformation)
+without learnable parameters to adapt the heuristic influence based on problem state.
+
+To address these limitations, this thesis proposes a Cost-Aware Gating mechanism that:
+(1) uses time-dependent travel costs rather than static distances as the heuristic
+signal, (2) employs a learnable gating parameter $\lambda_{\text{heur}}$ that can adapt
+the heuristic influence, and (3) explores nonlinear transformations (piecewise-linear,
+exponential) of heuristic logits. We blend the heuristic logits as a bias into the
+attention logits via:
+
+\begin{equation}
+    \ell_i^{\text{blended}} = \ell_i + \lambda_{\text{heur}} \cdot h_i(s_t)
+    \label{eq:blended_logit}
+\end{equation}
+
+where $\ell_i$ denotes the raw attention logit for candidate node $i$, $h_i(s_t)$ is
+the heuristic score, and $\lambda_{\text{heur}}$ is a learnable parameter.
+
+\subsection{Gap 3: Static Encoder Consuming the Full Traffic History}
+
+The encoders of standard attention models, including our M1 baseline \citep{zhang2023},
+take the full-day traffic profile as input. However, in real-world dynamic routing
+problems, specific opening and closing times mean that feeding the full-day traffic
+profile wastes both computational resources and time. Therefore, we feed a time
+window, instead of the full history, into the encoder. We also refresh the
+encoder when the current decision time exceeds the encoded window boundary. We could
+not find any prior work in this area, and this thesis addresses this gap with the Time
+Slicing with Safe Refresh mechanism.
+
+\section{Thesis Structure}
+
+The remainder of this thesis is organised as follows:
+
+\textbf{Chapter 2: Related Work} provides a comprehensive review of the literature on
+classical and time-dependent TSP, traditional heuristic methods, neural combinatorial
+optimization, and deep reinforcement learning for routing problems.
+
+\textbf{Chapter 3: Methodology} discusses the technical details of our approach. First,
+we describe the baseline M1 model's architecture, including the encoder-decoder
+attention model. Next, we discuss the implementation details of the three proposed
+enhancements (Step-MLP, the cost-aware gating mechanism, and time slicing with safe
+refresh). Finally, we describe the training procedure with the REINFORCE algorithm with
+rollout baseline.
+
+\textbf{Chapter 4: Experiments} presents the end-to-end experimental setup and results.
+We describe the real-world Beijing dataset, baseline comparisons, and evaluation
+metrics. We then present results for each proposed enhancement, including ablation
+studies and hyperparameter sensitivity analyses. We examine computational costs,
+training stability, and scaling behaviour from 19-node to 49-node instances.
+
+\textbf{Chapter 5: Conclusion} summarises the contributions of this thesis and their
+implications for the broader field of neural combinatorial optimization.
