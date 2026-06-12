@@ -5,6 +5,10 @@
 
 A Deep Reinforcement Learning framework for solving the **Dynamic Travelling Salesman Problem (DTSP)** with time-dependent edge costs and a novel **time-slicing** mechanism. Built on top of an attention-based transformer, extended with Cost-Aware Gating, Step-MLP temporal context, and two architectural variants for graph-independent and graph-dependent feature encodings.
 
+<p align="center">
+  <img src="figures/DeepRLforTDTSP.gif" alt="DRL agent solving DTSP with time slicing"/>
+</p>
+
 ---
 
 ## Table of Contents
