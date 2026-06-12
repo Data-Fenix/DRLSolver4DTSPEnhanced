@@ -3,7 +3,7 @@
 > **Master's Thesis** - Anuradha Dissanayake  
 > University of Hildesheim, Germany · Supervisor: Prof. Dr. Dr. Lars Schmidt-Thieme, Tim Dernedde
 
-A Deep Reinforcement Learning framework for solving the **deterministic Time-Dependent Travelling Salesman Problem (TDTSP)** with a fixed customer set. Built on top of the M1 attention-based encoder-decoder of Zhang et al. (2023), this work introduces three architectural extensions — **Step-Aware Decoder (Step-MLP / Temp-MLP)**, **Cost-Aware Gating**, and **Time-Sliced Traffic Encoding with Safe Refresh** — evaluated on real-world Beijing traffic data at customer set sizes C = 19 and C = 49.
+A Deep Reinforcement Learning framework for solving the **deterministic Time-Dependent Travelling Salesman Problem (TDTSP)** with a fixed customer set. Built on top of the M1 attention-based encoder-decoder of Zhang et al. (2023), this work introduces three architectural extensions: **Step-Aware Decoder (Step-MLP / Temp-MLP)**, **Cost-Aware Gating**, and **Time-Sliced Traffic Encoding with Safe Refresh**. All extensions are evaluated on real-world Beijing traffic data at customer set sizes C = 19 and C = 49.
 
 <p align="center">
   <img src="figures/DeepRLforTDTSP.gif" alt="DRL agent solving TDTSP with time slicing"/>
@@ -69,7 +69,7 @@ The M1 baseline (Zhang et al., 2023) has three architectural gaps that this thes
 
 ### Gap 1 - No Tour-Progress Awareness in the Decoder
 
-The M1 decoder receives the graph embedding, depot embedding, visited mask, last-visited node, and current traffic — but has no explicit signal for how far through the tour it has progressed. Early-tour decisions (anticipating afternoon congestion) and late-tour decisions (declining congestion) require fundamentally different reasoning.
+The M1 decoder receives the graph embedding, depot embedding, visited mask, last-visited node, and current traffic, but has no explicit signal for how far through the tour it has progressed. Early-tour decisions (anticipating afternoon congestion) and late-tour decisions (declining congestion) require fundamentally different reasoning.
 
 **Contribution: Step-Aware Decoder via Step-MLP and Temp-MLP**
 
@@ -104,7 +104,7 @@ The M1 encoder encodes the entire day's traffic matrix, most of which is irrelev
 
 The encoder receives only a **forward time window** from the current decision time. A **safe refresh** mechanism re-encodes the traffic whenever the decoder's current time approaches or exceeds the window boundary, keeping the encoder's representation current throughout the tour.
 
-### Bonus — Graph-Size-Independent Architecture
+### Bonus: Graph-Size-Independent Architecture
 
 The original M1 model locks to a fixed graph size at training time. This thesis replaces the fixed-size visited-state and traffic embedding projections with **adaptive average pooling layers**, allowing a single trained model to generalise across customer set sizes without retraining. Quality degradation is at most **1.24%** relative to size-specific baselines.
 
@@ -113,7 +113,7 @@ The original M1 model locks to a fixed graph size at training time. This thesis 
 ## Architecture Overview
 
 <p align="center">
-  <img src="figures/full_architecture.png" width="780" alt="Full model architecture — extensions highlighted in red dashed boxes"/>
+  <img src="figures/full_architecture.png" width="780" alt="Full model architecture with extensions highlighted in red dashed boxes"/>
 </p>
 
 The **encoder** is a multi-head attention (MHA) transformer. Node features are one-hot encoded vectors of dimension 100 (the full location pool), processed through a linear projection and several MHA layers to produce per-node embeddings and a global graph embedding.
@@ -132,8 +132,8 @@ The policy is trained with **REINFORCE + rollout baseline**. The baseline model 
 
 | Directory | Description |
 |---|---|
-| `m1/` | **Graph-independent** — node features do not include pairwise distance encoding. Faster, lower memory, supports cross-size generalisation via adaptive pooling. |
-| `m1_graph_dependent/` | **Graph-dependent** — encoder receives the current distance matrix as additional node features. More expressive; requires fixed graph size unless adaptive pooling is applied. |
+| `m1/` | **Graph-independent**: node features do not include pairwise distance encoding. Faster, lower memory, supports cross-size generalisation via adaptive pooling. |
+| `m1_graph_dependent/` | **Graph-dependent**: encoder receives the current distance matrix as additional node features. More expressive; requires fixed graph size unless adaptive pooling is applied. |
 | `m2/` | Experimental M2 architecture (Zhang et al., 2023 baseline variant for dynamic customer pools). |
 
 ---
@@ -144,7 +144,7 @@ All neural model results are averaged across three random seeds (1234, 5678, 901
 
 ### Step-MLP & Decoder Variants
 
-The chart below shows the percentage improvement (lower is better — negative y = improvement) of each decoder MLP configuration over the M1 baseline, at both C = 19 (50 epochs) and C = 49 (100 epochs).
+The chart below shows the percentage improvement (lower is better; negative y = improvement) of each decoder MLP configuration over the M1 baseline, at both C = 19 (50 epochs) and C = 49 (100 epochs).
 
 <p align="center">
   <img src="figures/figure_4_5_decoder_mlp_final.png" width="720" alt="Decoder MLP variant comparison: % improvement over baseline at C=19 and C=49"/>
@@ -214,19 +214,19 @@ Key findings:
 
 ### Time Slicing with Safe Refresh Results
 
-**Window size sensitivity** — optimal window size W varies with graph size. At C = 19 all windows are worse than no-slicing baseline; the mechanism shows clear benefit from C = 20 upward.
+**Window size sensitivity:** optimal window size W varies with graph size. At C = 19 all windows are worse than no-slicing baseline; the mechanism shows clear benefit from C = 20 upward.
 
 <p align="center">
   <img src="figures/figure_4_9_window_size.png" width="680" alt="Window size W vs mean test cost at C=19, C=20, C=29"/>
 </p>
 
-**Time slicing summary** across graph sizes — optimal W, cost improvement with one-time refresh, and optimal start time bin:
+**Time slicing summary** across graph sizes (optimal W, cost improvement with one-time refresh, and optimal start time bin):
 
 <p align="center">
   <img src="figures/figure_time_slicing_summary.png" width="720" alt="Time slicing summary: optimal window size, cost improvement, and optimal start time across C=19/29/49"/>
 </p>
 
-**Training time vs. cost trade-off** across all graph sizes — arrows show the direction of change from baseline (circle) to best time-sliced configuration (square):
+**Training time vs. cost trade-off** across all graph sizes. Arrows show the direction of change from baseline (circle) to best time-sliced configuration (square):
 
 <p align="center">
   <img src="figures/figure_4_13_efficiency_scatter.png" width="680" alt="Training time per epoch vs mean test cost: baseline vs best time-sliced configuration"/>
