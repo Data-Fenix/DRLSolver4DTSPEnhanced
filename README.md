@@ -1,7 +1,7 @@
 # DRL Solver for Dynamic TSP with Time Slicing
 
 > Master's Thesis — Anuradha Dissanayake  
-> Hochschule für Technik und Wirtschaft Berlin (HTW Berlin)
+> University of Hildesheim, Germany
 
 A Deep Reinforcement Learning framework for solving the **Dynamic Travelling Salesman Problem (DTSP)** with time-dependent edge costs and a novel **time-slicing** mechanism. Built on top of an attention-based transformer, extended with Cost-Aware Gating, Step-MLP temporal context, and two architectural variants for graph-independent and graph-dependent feature encodings.
 
